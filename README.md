@@ -101,3 +101,9 @@ pytest --cov=mcp_searxng --cov-report=html
 ## License
 
 MIT License
+
+See [LICENSE](LICENSE) for full text.
+
+## Acknowledgments
+
+This project uses open source software. See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for a full list of dependencies and their licenses.

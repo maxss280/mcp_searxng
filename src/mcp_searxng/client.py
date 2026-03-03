@@ -1,7 +1,7 @@
 """SearXNG HTTP client implementation."""
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -44,7 +44,7 @@ class SearXNGClient:
         self,
         query: str,
         page: int = 1,
-        **kwargs,
+        **kwargs: Any,
     ) -> SearchResponse:
         """
         Perform a search query against SearXNG.
@@ -61,11 +61,7 @@ class SearXNGClient:
             httpx.HTTPStatusError: If the request fails
             httpx.TimeoutException: If the request times out
         """
-        request = SearchRequest(
-            q=query,
-            pageno=page,
-            **kwargs,
-        )
+        request = SearchRequest(q=query, pageno=page, **kwargs)
 
         client = await self._get_client()
         url = f"{self.base_url}/search"
@@ -84,11 +80,11 @@ class SearXNGClient:
 
             # Filter out invalid results (missing URL or title)
             valid_results = search_response.get_valid_results()
-            
+
             # Limit results if needed
             if len(valid_results) > self.max_results:
-                valid_results = valid_results[:self.max_results]
-            
+                valid_results = valid_results[: self.max_results]
+
             search_response.results = valid_results
 
             logger.info(

@@ -98,7 +98,7 @@ class SearchResponse(BaseModel):
             if isinstance(item, str):
                 result.append(item)
             elif isinstance(item, list) and len(item) > 0:
-                # If it's a list like ['artic', 'parsing error'], 
+                # If it's a list like ['artic', 'parsing error'],
                 # take the first element (engine name)
                 result.append(str(item[0]))
         return result

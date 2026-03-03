@@ -78,13 +78,12 @@ class TestFormatSearchResults:
 
         formatted = await format_search_results(response)
 
-        assert "Search results for: python" in formatted
-        assert "Found 2 results" in formatted
+        assert "Results for: python" in formatted
         assert "1. Python" in formatted
         assert "2. PyPI" in formatted
         assert "https://python.org" in formatted
         assert "https://pypi.org" in formatted
-        assert "Related searches:" in formatted
+        assert "Related:" in formatted
         assert "python tutorial" in formatted
 
     async def test_format_empty_results(self):
@@ -93,7 +92,7 @@ class TestFormatSearchResults:
 
         formatted = await format_search_results(response)
 
-        assert "No results found for: xyzabc123" in formatted
+        assert "No results: xyzabc123" in formatted
 
     async def test_format_without_suggestions(self):
         """Test formatting without suggestions."""
@@ -112,7 +111,7 @@ class TestFormatSearchResults:
         formatted = await format_search_results(response)
 
         assert "Example" in formatted
-        assert "Related searches:" not in formatted
+        assert "Related:" not in formatted
 
 
 class TestSearxngSearch:
@@ -124,7 +123,6 @@ class TestSearxngSearch:
         self, mock_settings, sample_search_response, monkeypatch
     ):
         """Test successful search via MCP tool."""
-        # Mock the HTTP endpoint with the default URL
         respx.get("https://searxng.pixelcrazed.com/search").mock(
             return_value=httpx.Response(200, json=sample_search_response)
         )
@@ -133,7 +131,7 @@ class TestSearxngSearch:
 
         result = await searxng_search("python")
 
-        assert "Search results for: python" in result
+        assert "Results for: python" in result
         assert "Python Programming" in result
         assert "PyPI" in result
 
@@ -182,6 +180,40 @@ class TestSearxngSearch:
 
         assert "Search failed:" in result
 
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_search_empty_query_validation(self, mock_settings, monkeypatch):
+        """Test empty query validation."""
+        from mcp_searxng.server import searxng_search
+
+        result = await searxng_search("")
+
+        assert "Invalid query" in result
+        assert "empty" in result.lower()
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_search_whitespace_query_validation(self, mock_settings, monkeypatch):
+        """Test whitespace-only query validation."""
+        from mcp_searxng.server import searxng_search
+
+        result = await searxng_search("   ")
+
+        assert "Invalid query" in result
+        assert "whitespace" in result.lower()
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_search_too_long_query_validation(self, mock_settings, monkeypatch):
+        """Test query length validation."""
+        from mcp_searxng.server import searxng_search
+
+        long_query = "a" * 501
+        result = await searxng_search(long_query)
+
+        assert "Invalid query" in result
+        assert "too long" in result.lower()
+
 
 class TestServerIntegration:
     """Integration tests for the MCP server."""
@@ -198,9 +230,7 @@ class TestServerIntegration:
 
         from mcp_searxng.server import setup_logging
 
-        # Should not raise any exceptions
         setup_logging()
 
-        # Verify logging is configured at root level
         root_logger = logging.getLogger()
         assert root_logger.level in [logging.INFO, logging.DEBUG, logging.WARNING]

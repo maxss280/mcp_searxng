@@ -2,6 +2,7 @@
 
 import logging
 import sys
+from typing import Tuple
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
@@ -10,6 +11,13 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp_searxng.client import SearXNGClient
 from mcp_searxng.config import get_settings
 from mcp_searxng.models import SearchResponse
+
+# Constants
+DEFAULT_MAX_CONTENT_LENGTH = 150
+MAX_QUERY_LENGTH = 500
+
+logger = logging.getLogger(__name__)
+mcp = FastMCP("searxng")
 
 
 def setup_logging() -> None:
@@ -24,22 +32,94 @@ def setup_logging() -> None:
     )
 
 
-mcp = FastMCP("searxng")
-logger = logging.getLogger(__name__)
+def validate_query(query: str) -> Tuple[bool, str]:
+    """Validate search query.
+
+    Args:
+        query: The search query string to validate
+
+    Returns:
+        Tuple of (is_valid, result_or_error_message)
+        If valid, result contains the sanitized query
+        If invalid, result contains the error message
+    """
+    if not query:
+        return False, "Query cannot be empty"
+
+    query = query.strip()
+    if not query:
+        return False, "Query cannot be whitespace only"
+
+    if len(query) > MAX_QUERY_LENGTH:
+        return False, f"Query too long (max {MAX_QUERY_LENGTH} characters)"
+
+    # Remove null bytes (potential injection)
+    query = query.replace("\x00", "")
+
+    return True, query
 
 
-async def format_search_results(response: SearchResponse, max_content_len: int = 150) -> str:
+async def _perform_search(
+    query: str, page: int = 1, categories: str = "general"
+) -> str:
+    """Perform a search query and format results.
+
+    Args:
+        query: The search query string (already validated)
+        page: Page number for pagination
+        categories: Search category (general, images, videos)
+
+    Returns:
+        Formatted search results or error message
+    """
+    logger.info(f"Search request: {query} (page {page}, category: {categories})")
+
+    async with SearXNGClient() as client:
+        try:
+            if categories == "general":
+                response = await client.search_text(query=query, page=page)
+            else:
+                response = await client.search(
+                    query=query,
+                    page=page,
+                    categories=categories,
+                )
+            return await format_search_results(response)
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            return f"Search failed: {str(e)}"
+
+
+async def format_search_results(
+    response: SearchResponse, max_content_len: int = DEFAULT_MAX_CONTENT_LENGTH
+) -> str:
+    """Format search results for display.
+
+    Args:
+        response: Search response from SearXNG
+        max_content_len: Maximum length of content snippet
+
+    Returns:
+        Formatted string with search results
+    """
     if not response.results:
         return f"No results: {response.query}"
 
-    parts = [f"Results for: {response.query}\n(Launch parallel subagents to webfetch top 3-5 URLs and synthesize relevant info)\n"]
+    parts = [
+        f"Results for: {response.query}\n"
+        "(Launch parallel subagents to webfetch top 3-5 URLs and synthesize info)\n"
+    ]
     for i, r in enumerate(response.results, 1):
-        content = (r.content[:max_content_len] + "...") if r.content and len(r.content) > max_content_len else (r.content or "")
+        content = (
+            (r.content[:max_content_len] + "...")
+            if r.content and len(r.content) > max_content_len
+            else (r.content or "")
+        )
         parts.append(f"{i}. {r.title}\n   URL: {r.url}\n   {content}")
-    
+
     if response.suggestions:
         parts.append(f"\nRelated: {', '.join(response.suggestions[:3])}")
-    
+
     return "\n\n".join(parts)
 
 
@@ -49,9 +129,6 @@ async def searxng_search(query: str, page: int = 1) -> str:
     Search the web using SearXNG metasearch engine.
 
     Returns search results with titles, URLs, and short snippets.
-    IMPORTANT: For comprehensive answers, launch parallel subagents to 
-    webfetch the top 3-5 relevant URLs and synthesize only the significant 
-    information relevant to the user's query. Discard irrelevant content.
 
     Args:
         query: The search query string (required)
@@ -64,15 +141,12 @@ async def searxng_search(query: str, page: int = 1) -> str:
         searxng_search("python programming")
         searxng_search("machine learning", page=2)
     """
-    logger.info(f"Search request: {query} (page {page})")
+    is_valid, result = validate_query(query)
+    if not is_valid:
+        return f"Invalid query: {result}"
+    query = result
 
-    async with SearXNGClient() as client:
-        try:
-            response = await client.search_text(query=query, page=page)
-            return await format_search_results(response)
-        except Exception as e:
-            logger.error(f"Search failed: {e}")
-            return f"Search failed: {str(e)}"
+    return await _perform_search(query, page, "general")
 
 
 @mcp.tool()
@@ -80,8 +154,7 @@ async def searxng_search_images(query: str, page: int = 1) -> str:
     """
     Search for images using SearXNG metasearch engine.
 
-    Returns image results with thumbnails and metadata.
-    Use webfetch on relevant URLs to get full image details.
+    Returns image search results with thumbnails and metadata.
 
     Args:
         query: The image search query (required)
@@ -93,19 +166,12 @@ async def searxng_search_images(query: str, page: int = 1) -> str:
     Example:
         searxng_search_images("python logo")
     """
-    logger.info(f"Image search request: {query} (page {page})")
+    is_valid, result = validate_query(query)
+    if not is_valid:
+        return f"Invalid query: {result}"
+    query = result
 
-    async with SearXNGClient() as client:
-        try:
-            response = await client.search(
-                query=query,
-                page=page,
-                categories="images",
-            )
-            return await format_search_results(response)
-        except Exception as e:
-            logger.error(f"Image search failed: {e}")
-            return f"Image search failed: {str(e)}"
+    return await _perform_search(query, page, "images")
 
 
 @mcp.tool()
@@ -113,8 +179,7 @@ async def searxng_search_videos(query: str, page: int = 1) -> str:
     """
     Search for videos using SearXNG metasearch engine.
 
-    Returns video results with thumbnails and metadata.
-    Use webfetch on relevant URLs to get full video details.
+    Returns video search results with thumbnails and metadata.
 
     Args:
         query: The video search query (required)
@@ -126,19 +191,12 @@ async def searxng_search_videos(query: str, page: int = 1) -> str:
     Example:
         searxng_search_videos("python tutorial")
     """
-    logger.info(f"Video search request: {query} (page {page})")
+    is_valid, result = validate_query(query)
+    if not is_valid:
+        return f"Invalid query: {result}"
+    query = result
 
-    async with SearXNGClient() as client:
-        try:
-            response = await client.search(
-                query=query,
-                page=page,
-                categories="videos",
-            )
-            return await format_search_results(response)
-        except Exception as e:
-            logger.error(f"Video search failed: {e}")
-            return f"Video search failed: {str(e)}"
+    return await _perform_search(query, page, "videos")
 
 
 def main() -> None:
@@ -163,7 +221,7 @@ def main() -> None:
         )
         sse = SseServerTransport("/messages/", security_settings=security_settings)
 
-        async def handle_sse(request):
+        async def handle_sse(request):  # type: ignore
             async with sse.connect_sse(
                 request.scope, request.receive, request._send
             ) as streams:
